@@ -1,0 +1,45 @@
+Hive
+Duplicate Delete
+Remove specific column from Hive table
+Partition
+Bucketing
+External/Internal
+Loading data /user/hive/warehouse/data
+Loading data from other location without removing the source file and moving it to warehouse dir --> Alter table Add Partition.
+Hive VS Impala
+
+
+HBase
+
+
+Spark
+Shuffle
+Repartition
+Coalesce
+NULLIF
+REGEX
+Executor memory decision
+Schema
+Cache
+
+
+Dataframe
+Explode
+isIn
+Column with corrupt Value
+Modes in option(Permissive)
+inferSchema true/false
+Load corrupt value in other column without failing the process
+
+
+
+Kafka
+
+
+Scala
+Exception handling
+
+
+Sqoop
+
+
