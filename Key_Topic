@@ -9,6 +9,7 @@ Loading data from other location without removing the source file and moving it 
 Hive VS Impala
 Date Function in Hive.
 Delta Operation
+Join
 
 
 HBase
