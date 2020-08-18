@@ -7,6 +7,7 @@ External/Internal
 Loading data /user/hive/warehouse/data
 Loading data from other location without removing the source file and moving it to warehouse dir --> Alter table Add Partition.
 Hive VS Impala
+Date Function in Hive.
 
 
 HBase
