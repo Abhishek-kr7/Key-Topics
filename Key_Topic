@@ -10,12 +10,50 @@ Hive VS Impala
 Date Function in Hive.
 Delta Operation
 Join
+Scala
+Exception handling
+
+ACID - 
+Atomicity
+—Abort: If a transaction aborts, changes made to database are not visible.
+—Commit: If a transaction commits, changes made are visible.
+
+Consistency
+Database should remain consistence, before and after Transactions
+Total before T occurs = 500 + 200 = 700.
+Total after T occurs = 400 + 300 = 700.
+
+Isolation
+Each Transaction should run in isolation
+This property ensures that multiple transactions can occur concurrently without leading to the inconsistency of database state. 
+
+Durability:
+This property ensures that once the transaction has completed execution, 
+the updates and modifications to the database are stored in and written to disk and they persist even if a system failure occurs.
+
+SELECT 
+	[every column], count(*) 
+FROM ( 
+	SELECT [every column], * 
+	FROM table 
+	DISTRIBUTE BY [every column] 
+	HAVING count(*) > 1  
+) t;
 
 
 HBase
 
 
 Spark
+spark = SparkSession.builder \
+    .config('spark.sql.shuffle.partitions', '100') \
+    .getOrCreate()
+
+spark.conf.set("spark.dynamicAllocation.enabled", "true")
+spark.conf.set("spark.executor.cores", 4)
+spark.conf.set("spark.dynamicAllocation.minExecutors","1")
+spark.conf.set("spark.dynamicAllocation.maxExecutors","5")
+
 Shuffle
 Repartition
 Coalesce
@@ -24,6 +62,9 @@ REGEX
 Executor memory decision
 Schema
 Cache
+
+Type and difference in file format
+
 
 
 Dataframe
@@ -39,10 +80,5 @@ Load corrupt value in other column without failing the process
 Kafka
 
 
-Scala
-Exception handling
-
 
 Sqoop
-
-
