@@ -82,3 +82,40 @@ Kafka
 
 
 Sqoop
+
+
+Cluster Specifications	   Stage	Prod
+Cluster Name	           TCDH2S_New	PCDH2S_New
+Number of nodes 27 455	   27	        455
+HDFS Size	           403 TB	21.12 PB
+Number of cores            1160	        29032
+Total Memory	           11 TB	174 TB
+CDH Version                6.3.3	6.3.3
+Spark version	           2.4.0	2.4.0
+Hive Version               1.1.0	1.1.0
+Impala Version	           2.12	        2.12
+Scala version              2.11.2       2.11.2
+Python                     3.7.3        3.7.3
+
+
+
+Cluster Specifications Stage Prod
+Cluster Name
+TCDH2S_New
+PCDH2S_New
+Number of nodes 27 455
+HDFS Size
+403 TB
+21.12 PB
+Number of cores 1160 29032
+Total Memory
+11 TB
+174 TB
+CDH Version 5.16.2 5.16.2
+Spark version
+2.4.0
+2.4.0
+Hive Version 1.1.0 1.1.0
+Impala Version
+2.12
+2.12
