@@ -65,6 +65,25 @@ Cache
 
 Type and difference in file format
 
+Skewness in Spark
+one process is hang in spark and other executed 
+
+Parallelism in Kafka
+trending Tweet count from Kafka
+
+How data will be differ in Flatmap and Map
+
+shuffle default in spark or not?
+
+default value of shuffle?
+
+trad in scala
+
+
+connect api vs consumer api
+
+
+
 
 
 Dataframe
