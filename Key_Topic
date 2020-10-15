@@ -55,15 +55,98 @@ spark.conf.set("spark.dynamicAllocation.minExecutors","1")
 spark.conf.set("spark.dynamicAllocation.maxExecutors","5")
 
 Shuffle
+What is Spark Shuffle?
+Shuffling is a mechanism Spark uses to redistribute the data across different executors and even across machines. 
+Spark shuffling triggers when we perform certain transformation operations like gropByKey(), reducebyKey(), join() on RDD and DataFrame.
+Spark Shuffle is an expensive operation since it involves the following
+Disk I/O
+Involves data serialization and deserialization
+Network I/O
+
 Repartition
+In Spark or PySpark repartition is used to increase or decrease the RDD, DataFrame, Dataset partitions
+It is a costly operation as it shuffle the data across many partitions.
+
+It can be used to Increase or decrease th number of partition
+spark.sql.shuffle.partitions=500
+
 Coalesce
+Unlike repartition coalesce is used to decrease the number of partitions and not to increase the partition.
+This is an optimized or improved version of repartition which can be used to reduce the number of partition and where the movement of data will be 
+low across the partitions.
+val df3 = df.coalesce(2)
+println(df3.rdd.partitions.length)
+
 NULLIF
+Used to replace with specific value with NULL if column contains matches with the a given value or keyword
+NULLIF(expression1, expression2 )
+MAKE column as NULL if expresion1 matches expression2
+
 REGEX
+Used to search and modify specific regular expression
+SELECT DisplayName
+   FROM Players
+   WHERE REGEXP_LIKE(DisplayName, '^Ste.*');
+
 Executor memory decision
+
 Schema
+
 Cache
+Cache is one of the optimization technique in Spark to improve the data processing speed and performance where we can keep the data in memory
+which will be used multiple times in the processing operation.
+Cache by default used to save the in memory
+
+df.cache()
+
+Persist()
+Similar to Cache, persist is also used to save the data in memory but along with that you can use the user defined way of saving it as well
+Storage option
+
+MEMORY_ONLY 
+MEMORY_ONLY – This is the default behavior of the RDD cache() method and stores the RDD or DataFrame as deserialized objects to JVM memory. 
+When there is no enough memory available it will not save DataFrame of some partitions and these will be re-computed as and when required. This takes more memory. 
+
+df.persist(StorageLevel.MEMORY_ONLY)
+
+MEMORY_ONLY_SER 
+This is the same as MEMORY_ONLY but the difference being it stores RDD as serialized objects to JVM memory. 
+It takes lesser memory (space-efficient) then MEMORY_ONLY as it saves objects as serialized and takes an additional few more CPU cycles in order to deserialize.
+
+ndf = df.persist(StorageLevel.MEMORY_ONLY_SER)
+
+MEMORY_AND_DISK 
+MEMORY_AND_DISK_SER – This is same as MEMORY_AND_DISK storage level difference being it serializes the DataFrame objects in memory and on disk when space not available.
+
+ndf = df.persist(StorageLevel.MEMORY_AND_DISK)
+
+DISK_ONLY – In this storage level, DataFrame is stored only on disk and the CPU computation time is high as I/O involved.
+
+ndf = df.persist(StorageLevel.DISK_ONLY)
+
+Unpersist()
+ndf.unpersist()
+
 
 Type and difference in file format
+
+Avro:
+Since it’s a row based format, it’s better to use when all fields needs to be accessed
+Files support block compression and are splittable
+Suitable for write intensive operation
+If your use case typically scans or retrieves all of the fields in a row in each query, Avro is usually the best choice.
+
+Parquet:
+Apache Parquet, on the other hand, is a free and open-source column-oriented data storage 
+format of the Apache Hadoop ecosystem. 
+It is similar to the other columnar-storage file formats available in Hadoop namely RCFile and ORC. 
+Since it’s a column based format, it’s better to use when you only need to access specific fields.
+Each data file contains the values for a set of rows.
+Can’t be written from streaming data since it needs to wait for blocks to get finished. However, this will work using micro-batch (eg Apache Spark).
+Suitable for data exploration — read intensive, complex or analytical querying, low latency data
+If your dataset has many columns, and your use case typically involves working with a subset of those columns rather than entire records, 
+Parquet is optimized for that kind of work.
+
 
 Skewness in Spark
 one process is hang in spark and other executed 
@@ -72,12 +155,36 @@ Parallelism in Kafka
 trending Tweet count from Kafka
 
 How data will be differ in Flatmap and Map
+Spark Map function takes one element as input process it according to custom code (specified by the developer) and returns one element at a time. 
+Map transforms an RDD of length N into another RDD of length N. The input and output RDDs will typically have the same number of records.
+
+A FlatMap function takes one element as input process it according to custom code (specified by the developer) and returns 0 or more element at a time. 
+flatMap() transforms an RDD of length N into another RDD of length M.
+
+Data
+Abc def ghi
+jkl mno pqr
+stu vwx yza
+
+val splitdata = data.flatMap(line => line.split(" "));  
+Array(abc,def,ghi,jkl,mno,....)
+
+val mapdata = splitdata.map(word => (word,1)); 
+Array((abc,1),(def,1),(ghi,1)....)
 
 shuffle default in spark or not?
+default and is set to 200 partitions
 
 default value of shuffle?
+200
 
-trad in scala
+
+Spark Broadcast Variables
+Broadcast variables are read-only shared variables that are cached and available on all nodes in a cluster in-order to access or use by the tasks. 
+Instead of sending this data along with every task, spark distributes broadcast variables to the machine using efficient broadcast algorithms to reduce communication costs.
+
+
+traits in scala
 
 
 connect api vs consumer api
@@ -87,13 +194,110 @@ connect api vs consumer api
 
 
 Dataframe
-Explode
-isIn
-Column with corrupt Value
-Modes in option(Permissive)
-inferSchema true/false
-Load corrupt value in other column without failing the process
 
+Explode
+
+explode – spark explode array or map column to rows
+
+val arrayData = Seq(
+    Row("James",List("Java","Scala"),Map("hair"->"black","eye"->"brown")),
+    Row("Michael",List("Spark","Java",null),Map("hair"->"brown","eye"->null)),
+    Row("Robert",List("CSharp",""),Map("hair"->"red","eye"->"")),
+    Row("Washington",null,null),
+    Row("Jefferson",List(),Map())
+    )
+   
+
+    val arraySchema = new StructType()
+      .add("name",StringType)
+      .add("knownLanguages", ArrayType(StringType))
+      .add("properties", MapType(StringType,StringType))
+
+    val df = spark.createDataFrame(spark.sparkContext.parallelize(arrayData),arraySchema)
+    df.printSchema()
+    df.show(false)
+    
+
+Spark function explode(e: Column) is used to explode or create array or map columns to rows. When an array is passed to this function, 
+it creates a new default column “col1” and it contains all array elements. When a map is passed, 
+it creates two new columns one for key and one for value and each element in map split into the row.  
+  
+  
+explode – array column example
+df.select($"name",explode($"knownLanguages"))
+      .show(false)
+
++-------+------+
+|name   |col   |
++-------+------+
+|James  |Java  |
+|James  |Scala |
+|Michael|Spark |
+|Michael|Java  |
+|Michael|null  |
+|Robert |CSharp|
+|Robert |      |
++-------+------+
+
+explode – map column example
+
+df.select($"name",explode($"properties"))
+  .show(false)
+
++-------+----+-----+
+|name   |key |value|
++-------+----+-----+
+|James  |hair|black|
+|James  |eye |brown|
+|Michael|hair|brown|
+|Michael|eye |null |
+|Robert |hair|red  |
+|Robert |eye |     |
++-------+----+-----+
+
+show(false)
+This will show the full column content without truncating. like
+
+
+df.show()
+12-30-10:00:....
+12-30-11:00:....
+12-30-12:00:....
+
+df.show(false)
+12-30-10:00:55:45
+12-30-11:00:23:34
+12-30-12:00:12:23
+
+isIn
+
+Modes in option(Permissive)
+
+Column with corrupt Value
+There are ways to handle
+we can place null value if any corrupt value occurs --- .option("mode","PERMISSIVE")
+we can place the bad record in a file if occurs --- .option("badRecordsPath","/tmp/badRecordsPath")
+we can drop the bad record  ---- .option("mode", "DROPMALFORMED")
+We can stop processing if any corrup value occurs ---- .option("mode", "FAILFAST")
+
+Word Count in Pyspark
+import sys
+ 
+from pyspark import SparkContext, SparkConf
+ 
+if __name__ == "__main__":
+	
+	# create Spark context with necessary configuration
+	sc = SparkContext("local","PySpark Word Count Exmaple")
+	
+	# read data from text file and split each line into words
+	words = sc.textFile("D:/workspace/spark/input.txt").flatMap(lambda line: line.split(" "))
+	
+	# count the occurrence of each word
+	wordCounts = words.map(lambda word: (word, 1)).reduceByKey(lambda a,b:a +b)
+	
+	# save the counts to output
+	wordCounts.saveAsTextFile("D:/workspace/spark/output/")
 
 
 Kafka
@@ -115,7 +319,6 @@ Hive Version               1.1.0	1.1.0
 Impala Version	           2.12	        2.12
 Scala version              2.11.2       2.11.2
 Python                     3.7.3        3.7.3
-
 
 
 Cluster Specifications Stage Prod
