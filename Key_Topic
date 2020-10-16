@@ -88,43 +88,45 @@ SELECT DisplayName
    FROM Players
    WHERE REGEXP_LIKE(DisplayName, '^Ste.*');
 
+
 Executor memory decision
+================================================
 
-Tiny Executor --> number or executor same as number of Core (Not Suggested)
-Fat Executor --> Number of executor same as number of Core.(Not Suggested)
-Combination of Tiny and Fat.(Good to Use)
+1.Tiny Executor --> number of executor same as number of Core (Not Suggested)
+2.Fat Executor --> Number of executor same as number of Core.(Not Suggested)
+3.Combination of Tiny and Fat.(Good to Use)
 
-
+Calculation of executor's memory
 —executor-memory = memory per node / num of executors per node
 
-Consider
+Let's Consider
 32 Core
 100GB Memory
 
-Tiny
+1.Tiny
 [Number of executor same as number of Core]
-core = 32
-total executor = same as core means total 32 executors
-executor memory = memory / executor ==> 100/32 --> 3GB per executor
+Core = 32
+Total executor = same as core means total 32 executors
+Executor memory = memory / executor ==> 100/32 --> 3GB per executor
  
-Fat
+2.Fat
 [Number of executor same as number of Node]
 core = 32
 executor = 1
 executor memory = memory/executor ==> 100/1 ---> 100GB 
 
-Combination of Tiny Executor and Fat Executor
+3.Combination of Tiny Executor and Fat Executor
 
-5 core per executor is a good choice.
+Note: 5 core per executor is a good choice. We will consider 5 core here for each executors
 
-core = 32 
-take 1 core for hadoop/yarn daemons
-remaining = 32 -1 = 31 core.
-executor =  31/5 => 6 executor
-keep 1 aside for application Manager.
-remaining executor = 6-1 => 5 executor
-executor memory => memory/executor ==> 100/5 => 20GB (exclude 7% for heap overhed)
-actual memory = 20 - (7%20) = 20 - 1.4 => 18.6 or 18GB per executor. 
+Core = 32 
+take 1 core for Hadoop/Yarn daemons
+Remaining Core = 32 -1 = 31 core.
+Total Executor =  31/5 => 6 Executors
+Keep 1 aside for application Manager.
+Remaining executor = 6-1 => 5 executor
+Executor memory => memory/executor ==> 100/5 => 20GB (exclude 7% for heap overhead)
+Actual Executor memory = 20 - (7%20) = 20 - 1.4 => 18.6 or 18GB per executor. 
 
 
 Schema
