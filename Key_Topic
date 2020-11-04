@@ -8,6 +8,15 @@ Loading data /user/hive/warehouse/data
 Loading data from other location without removing the source file and moving it to warehouse dir --> Alter table Add Partition.
 Hive VS Impala
 Date Function in Hive.
+
+Convert string to Date in hive
+
+unix_timestamp(string date, string pattern)
+from_unixtime(unix_timestamp('12-03-2010' , 'dd-MM-yyyy'))  --This will be string only
+
+use to_date
+cast(to_date(from_unixtime(unix_timestamp('12-03-2010' , 'dd-MM-yyyy'))))
+
 Delta Operation
 Join
 Scala
@@ -25,10 +34,10 @@ Total after T occurs = 400 + 300 = 700.
 
 Isolation
 Each Transaction should run in isolation
-This property ensures that multiple transactions can occur concurrently without leading to the inconsistency of database state. 
+This property ensures that multiple transactions can occur concurrently without leading to the inconsistency of database state.
 
 Durability:
-This property ensures that once the transaction has completed execution, 
+This property ensures that once the transaction has completed execution,
 the updates and modifications to the database are stored in and written to disk and they persist even if a system failure occurs.
 
 SELECT 
@@ -407,4 +416,18 @@ This way 20GB data will get process with the Help of Partitioning file.
 But Since we are not including any memory for hadoop/yarn daemon, chances are it may fail.
 Processing will be very slow.
 
+
+groupByKey() is just to group your dataset based on a key. It will result in data shuffling when RDD is not already partitioned.
+reduceByKey() is something like grouping + aggregation. We can say reduceBykey() equvelent to dataset.group(...).reduce(...). 
+It will shuffle less data unlike groupByKey().
+aggregateByKey() is logically same as reduceByKey() but it lets you return result in different type. In another words, 
+it lets you have a input as type x and aggregate result as type y. For example (1,2),(1,4) as input and (1,"six") as output. 
+It also takes zero-value that will be applied at the beginning of each key.
+
+
+Narrow transformation — In Narrow transformation, all the elements that are required to compute the records in single partition 
+live in the single partition of parent RDD. A limited subset of partition is used to calculate the result. Narrow transformations are the result of map(), filter().
+
+Wide transformation — In wide transformation, all the elements that are required to compute the records in the single partition may live in many partitions of parent
+RDD. The partition may live in many partitions of parent RDD. Wide transformations are the result of groupbyKey and reducebyKey.
 
