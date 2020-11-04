@@ -380,3 +380,31 @@ Hive Version 1.1.0 1.1.0
 Impala Version
 2.12
 2.12
+
+
+
+If i have cluster of 5 nodes, each node having 1gb ram, now if my data file is 10gb distributed in all 5 nodes, let say 2gb in each node
+
+
+Node = 5
+Memory Per Node = 1Gb
+Data per Node = 2Gb
+
+Since memory per node is less than data pernode , we can try processing data in chunks.
+
+Lets divide data in 4 partition while creating RDD
+
+rdd = sc.textFile("data/location/2gb.txt",4)
+
+rdd.persist(storage_level, 'MEMORY_AND_DISK_ONLY')
+
+In this way, first 500mb data will get process and then spilled on the disk.
+Then next 500mb will get process and spilled on the disk.
+
+Same will happen on each node.
+This way 20GB data will get process with the Help of Partitioning file.
+
+But Since we are not including any memory for hadoop/yarn daemon, chances are it may fail.
+Processing will be very slow.
+
+
