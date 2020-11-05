@@ -431,3 +431,5 @@ live in the single partition of parent RDD. A limited subset of partition is use
 Wide transformation — In wide transformation, all the elements that are required to compute the records in the single partition may live in many partitions of parent
 RDD. The partition may live in many partitions of parent RDD. Wide transformations are the result of groupbyKey and reducebyKey.
 
+beeline -u $hiveurl -e "show columns from etl_enc.clearing_chip_detail;" | grep -v "field" | grep -v "-" > fieldname.txt
+
