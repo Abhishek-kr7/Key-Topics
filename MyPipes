@@ -1,0 +1,722 @@
+tableName=`echo $1 | tr '[:upper:]' '[:lower:]'`
+ProcDate=$2
+arg=$#
+
+dateTime(){
+    date '+%Y-%m-%d %T'
+}
+MAIL_LIST=/dw_apps/etl/reproc/pig_reprocess/mailList.lst
+sendEmail(){
+    reprocLog=/dw_apps/etl/reproc/pig_reprocess/log/
+    echo "`dateTime` | Sending mail..."
+    mail_lists=`cat ${MAIL_LIST} | grep "^RECEIVER" | awk -F "=" '{print $2}'`
+    mail_list=`echo ${mail_lists//\"/}`
+    senders=`cat ${MAIL_LIST} | grep "^SENDER" | awk -F "=" '{print $2}'`
+    sender=`echo ${senders//\"/}`
+    if [ $1 == "success" ] ;
+    then
+    subject="Pig Failure Reprocessing : Reprocess Completed Successfully for Table: ${tableName} on `date '+%y-%m-%d at %H:%M:%S'`"
+    impala -d $db -B -q "$query" -o ${reprocLog}${tableName}_${ProcDate}.qry --print_header '--output_delimiter= ' 2> /dev/null
+    cat ${reprocLog}${tableName}_${ProcDate}.qry | tr '[:lower:]' '[:upper:]' > ${reprocLog}${tableName}_${ProcDate}.txt
+    #Convert the Impala Output into html format
+
+    awk 'BEGIN{print "<table border=2 cellspacing=2 cellpadding=2>"}
+    {
+         print "<tr bgcolor='\#87CEFA'>"
+         if (NR==1) {starttag="th scope=\"col\""; endtag="th"}
+         else {starttag="td"; endtag="td"}
+         for(i=1;i<=NF;i++)
+         print "<" starttag "><FONT COLOR=BLACK FACE=\"Geneva, Arial\" SIZE=3>" $i"</FONT></" endtag ">"
+         print "</tr>"
+    }
+    END{print "</table>"}' ${reprocLog}${tableName}_${ProcDate}.txt > ${reprocLog}${tableName}_${ProcDate}.html
+
+    content=${reprocLog}${tableName}_${ProcDate}.html
+    elif [ $1 == "progress" ] ;
+    then
+        subject="Pig Failure Reprocessing: Started for the Table: ${tableName} for the Process Date: ${ProcDate}."
+        content="Pig Script execution is in-progress for the Table: ${tableName} for Process Date: ${ProcDate}."
+    else
+        subject="Pig Failure Reprocessing: Reprocess Failed for the Table: $tableName for the Process Date: ${ProcDate}."
+        content="Re-Process was Failed for Table: ${tableName} for Process Date: ${ProcDate}."
+    fi
+    (
+     echo "From: ${sender}"
+     echo "To: $mail_list"
+     echo "Subject: ${subject}"
+     echo "Content-Type: text/html"
+     echo "MIME-Version: 1.0"
+     echo ""
+     if [ $1 == "success" ] ;
+     then
+         echo "<br><font color=\"blue\">Hi All,</font>"
+                 echo "<br>"
+                 echo "<br><font color=\"blue\">Please find below the details for the Table: $tableName<br>"
+                 echo "<br>"
+         cat $content
+                 echo "<br><br>"
+     else
+         echo "<br><font color=\"blue\">Hi All,</font>"
+                 echo "<br><br><strong><font color=\"blue\">${content}</font></strong><br><br>"
+         echo "<strong><font color=\"red\">Reason: $2</font></strong>"
+                 echo "<br>"
+         echo "<strong><font color=\"red\">${failureReason}</font></strong>"
+                 echo "<br><br>"
+     fi
+     echo "</center><br><font color=\"blue\">Thanks & Regards,</font>"
+     echo "<br><font color=\"blue\">${sender}<br>Mastercard </font><br>"
+     echo "<br>"
+     echo "<strong><font color=\"blue\">Note : This is an Automated Alert, Please do not respond/reply!</font></strong>"
+    ) | sendmail -t
+    if [ $? -ne 0 ] ;
+    then
+        echo "`dateTime` | Failed to send mail.."
+    else
+        echo "`dateTime` | Mail sent Successfully!"
+    fi
+}
+
+workDir=/dw_apps/etl/reproc/pig_reprocess/
+pigSource=/dw_apps/etl/postprocess/
+exec > ${workDir}log/reprocess_${tableName}_${ProcDate}_`date '+%Y%m%d%H%M%S'`.log
+exec 2>&1
+if [ $arg -eq 2 ] ;
+then
+    #Check if TableName is available in the Config File or NOt.
+    grep -qw ${tableName} ${workDir}/table_detail.ini
+    if [ $? -eq 0 ] ;
+    then
+        mmDD=`echo $ProcDate | cut -d '-' -f 2- | sed 's/-//'`
+        ProcYear=`echo $ProcDate | cut -c 1-4`
+        #Get the Table Type
+        tableType=`cat ${workDir}/table_detail.ini | grep -v "^#" | grep -w ${tableName} | awk -F "|" '{print $4}' | tr -d '[ ]'`
+        echo "`dateTime` | Beginning pig load process for the Table: ${tableName}."
+        echo "`dateTime` | Processing for the date: ${ProcDate}."
+        pigScript=`cat ${workDir}/table_detail.ini | grep -v "^#" | grep -w ${tableName} | awk -F "|" '{print $1}' | tr -d '[ ]'`
+        echo "`dateTime` | Pig Script for the Table ${tableName} is ${pigScript}."
+        echo "`dateTime` | Table type: ${tableType}."
+        echo "`dateTime` | Removing old pig script from: ${workDir}pig/${pigScript} if any."
+
+        if [ -f ${workDir}pig/${pigScript} ] ;
+        then
+            rm -f ${workDir}pig/${pigScript}
+        else
+            echo "`dateTime` | No file found to remove. This is OK"
+        fi
+
+        #Check if the data directory exist already or not.
+        echo "`dateTime` | Checking if old data partition for ${ProcDate} exists."
+        dataPath=`cat ${workDir}/table_detail.ini | grep -v "^#" | grep -w ${tableName} | awk -F "|" '{print $3}' | tr -d '[ ]'`
+        hadoop fs -test -d ${dataPath}${ProcYear}/${ProcDate}
+
+        if [ $? -ne 0 ] ;
+        then
+            echo "`dateTime` | No Existing data directory is found for ${ProcDate}. This is OK."
+        else
+            echo "`dateTime` | Old Data directory found for Process Date ${ProcDate}: ${dataPath}${ProcYear}/${ProcDate}"
+            echo "`dateTime` | Please remove the old data directory for the Process Date first and rerun the script."
+            sendEmail fail "Data directory already exist for ${ProcDate}!"
+            exit
+        fi
+
+        echo "`dateTime` | Building modified pig from the main Pig script..."
+        replaceString=`cat ${workDir}/table_detail.ini | grep -v "^#" | grep -w ${tableName} | awk -F "|" '{print $5}' | tr -d '[ ]'`
+        python3 ${workDir}buildPig.py ${pigScript} ${replaceString}
+
+        if [ $? -ne 0 ] ;
+        then
+            echo "`dateTime` | Failed to generate Pig File!"
+            echo "`dateTime` | Aborting further process.."
+            sendEmail fail "Unable to modify the Pig Script!"
+            exit
+        else
+            echo "`dateTime` | Pig File Build completed : ${workDir}pig/${pigScript}"
+        fi
+
+        QUEUE="-D mapred.job.queue.name=scheduled.etl"
+        echo "`dateTime` | Launching Pig Job: ${workDir}pig/${pigScript} -param mmdd=${mmDD} -param ProcYear=${ProcYear} -param ProcDate=${ProcDate}"
+        pig ${QUEUE} -f ${workDir}pig/${pigScript} -param mmdd=${mmDD} -param ProcYear=${ProcYear} -param ProcDate=${ProcDate} > /iwlog/reprocess_${tableName}_${ProcDate}_`date '+%Y%m%d%H%M%S'`.log 2>&1 &
+        echo "`dateTime` | Log for the Running Pig job: /iwlog/reprocess_${tableName}_${ProcDate}_`date '+%Y%m%d'`*.log"
+        sendEmail progress "N/A"
+        echo "`dateTime` | Waiting for completion of running pig job.."
+        processCount=`ps -ef | grep ${pigScript} | wc -l`
+        while [ $processCount -ne 1 ]
+        do
+            echo "`dateTime` | Running Process ID's(PID) count: $processCount!"
+            sleep 600
+            processCount=`ps -ef | grep ${pigScript} | wc -l`
+        done
+        echo "`dateTime` | Execution of Pig process completed."
+        echo "`dateTime` | Beginning Validation of the Loaded data.."
+
+        if [ ${tableName} == "gco_clearing_dtl_2020_enc" ] ;
+        then
+            db="GCO"
+        else
+            db="CORE"
+        fi
+
+        #check if the Data file generated or not.
+        dataPath=`cat ${workDir}/table_detail.ini | grep -v "^#" | grep -w ${tableName} | awk -F "|" '{print $3}' | tr -d '[ ]'`
+        hadoop fs -test -d ${dataPath}${ProcYear}/${ProcDate}
+
+        if [ $? -ne 0 ] ;
+        then
+            echo "`dateTime` | Failed to verify data Path!"
+            echo "`dateTime` | Data directory not found: ${dataPath}${ProcYear}/${ProcDate}!"
+            echo "`dateTime` | Pig process might have failed to read/write the data. Please check Pig Log."
+            echo "`dateTime` | Aborting further process.."
+            sendEmail fail "Cannot verify the data directory Post Pig execution. Please check Pig Log!"
+            exit
+        else
+            echo "`dateTime` | Found data Path: ${dataPath}${ProcYear}/${ProcDate}!"
+            echo "`dateTime` | Checking for the Datafile in the directory.."
+            fileCount=`hadoop fs -count ${dataPath}${ProcYear}/${ProcDate} | awk -F " " '{print $2}'`
+            if [ ${fileCount} -gt 1 ] ;
+            then
+                echo "`dateTime` | Found ${fileCount} files in the Data Directory."
+                echo "`dateTime` | Adding Data partition to the Table.."
+                targetDir=${dataPath}${ProcYear}/${ProcDate}
+                beeline -u $hiveurl -e "set hive.support.concurrency=false;ALTER TABLE ${db}.${tableName} ADD IF NOT EXISTS PARTITION(DW_PROCESS_DATE='${ProcDate}') LOCATION '${targetDir}';" 2> /dev/null
+                return_code=`echo $?`
+                if [ $return_code -eq 0 ] ;
+                then
+                    echo "`dateTime` | Partition added successfully!"
+                else
+                    echo "`dateTime` | Failed to add Partition!"
+                    echo "`dateTime` | Execute below commands manually to complete the load process."
+                    echo "`dateTime` | beeline -u \$hiveurl -e \"ALTER TABLE ${db}.${tableName} ADD PARTITION(DW_PROCESS_DATE='${ProcDate}') LOCATION '${targetDir}';\""
+                    echo "`dateTime` | impala -d ${db} -q \"COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');\""
+                    echo "`dateTime` | impala -d ${db} -q \"INVALIDATE METADATA ${db}.${tableName};\""
+                    sendEmail fail "Fail to add the Data Partition ${ProcDate}!"
+                    exit
+                fi
+                echo "`dateTime` | Refreshing Metadata for the Table: ${tableName}."
+                #impala -d ${db} -q "INVALIDATE METADATA ${db}.${tableName};" 2> /dev/null
+                impala -d ${db} -q "REFRESH ${db}.${tableName};" 2> /dev/null
+                return_code=`echo $?`
+                if [ $return_code -eq 0 ] ;
+                then
+                    echo "`dateTime` | Table Refreshed successfully!"
+                    echo "`dateTime` | Successfully completed reprocess of ${db}.${tableName} for the Process Date: ${ProcDate}!"
+                else
+                    echo "`dateTime` | Failed to Refresh Table!"
+                    echo "`dateTime` | Execute below commands manually to complete the Invalidate process."
+                    echo "`dateTime` | impala -d ${db} -q \"REFRESH ${db}.${tableName};\""
+                    echo "`dateTime` | Load process completed with Error."
+                    sendEmail fail "Failed to Execute the Invalidate query!"
+                    exit
+                fi
+                echo "`dateTime` | Computing Table Stats.."
+                impala -d $db -q "COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');" 2> /dev/null
+                return_code=`echo $?`
+                if [ $return_code -eq 0 ] ;
+                then
+                    echo "`dateTime` | Compute Statistics completed for the Table Partition."
+                else
+                    echo "`dateTime` | Failed to compute Statistic for the Partition!"
+                    echo "`dateTime` | Below command needs to be executed manually to complete the Stat computation."
+                    echo "`dateTime` | impala -d ${db} -q \"COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');\""
+                    sendEmail fail "Failed to compute the Tale Stats!"
+                fi
+            else
+                echo "`dateTime` | Data Directory doesnot contains data files!"
+                echo "`dateTime` | Pig process might got failed to store the data in the data directory. Perform the cleanup and rerun the process again."
+                echo "`dateTime` | Aborting Further Steps.."
+                exit
+            fi
+        fi
+    else
+        echo "`dateTime` | Table $tableName not found in the ini file!"
+        echo "`dateTime` | Cannot Process further. Aborting..."
+        exit
+    fi
+else
+    echo "`dateTime` | Number of Argument passed($arg) is not matching with the required number(2) of arguments!"
+    echo "`dateTime` | Provide Tablename and Process date(YYYY-MM-DD) as argument while executing the Script."
+    exit
+fi
+
+
+
+
+#!/bin/bash
+table=$1
+year=$2
+exec > /iwlog/${table}_netezza_sqoop_${year}_`date +%Y%m%d`.log
+exec 2>&1
+while read procdate
+do
+sqoop import -Dmapreduce.job.queuename=root.scheduled.etl -Dmapreduce.map.memory.mb=8192 -Dmapreduce.map.java.opts=-Xmx7200m \
+--connect jdbc:netezza://nps2ksc0/CORE \
+--username SVC_DW_HADOOP \
+--password-file hdfs:///reproc/core/.ksc_netezza \
+--direct \
+--target-dir /reproc/core/${table}/${year}/$procdate \
+--query "SELECT * FROM CORE..${table} WHERE \$CONDITIONS AND to_char(DW_PROCESS_DATE, 'YYYY-MM-DD') = '$procdate'" \
+--split-by "${table}.DW_PROCESS_DATE" \
+--fetch-size 10000
+--null-string '' \
+--null-non-string '' \
+--num-mappers 8 \
+--escaped-by '\\' \
+--fields-terminated-by '\0001'
+done < /dw_apps/etl/reproc/e088339/dates/${table}_${year}.lst
+
+
+e088339:/dw_apps/etl/reproc/e088339/addm > cat addm_command_line_arg.py
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#Import standard modules
+import os
+import sys
+import argparse
+import traceback
+
+import errno
+import re
+import logging
+import math
+
+from pyspark.sql import *
+from pyspark.sql.types import *
+from pyspark.sql.utils import *
+from pyspark.sql.functions import *
+
+from pyspark.sql.types import *
+from os import access, R_OK
+from os.path import isfile
+
+from datetime import datetime
+from datetime import timedelta
+#from dateutil import rrule
+#from dateutil.rrule import DAILY, MO, TU, WE, TH, FR, SA
+
+#Import pyspark modules
+from pyspark.conf import SparkConf
+from pyspark.sql.session import SparkSession
+
+#Import Setttings from dumbo
+from dumbo import settings
+from dumbo import utils
+import subprocess
+from subprocess import Popen, PIPE
+from subprocess import check_output
+
+table_name = sys.argv[1]
+year = sys.argv[2]
+
+def dateRange(hdfs_location):
+    '''
+    This function will take the hdfs_location and will return the
+    List of Process_date by popping up the last directory of hdfs_location
+    :param hdfs_location:
+    :return:
+    '''
+    process_date = []
+    path = hdfs_location
+    process = Popen(path[0],shell=True,stdout=PIPE, stderr=PIPE)
+    std_out,err = process.communicate()
+    std_out = std_out.decode("utf-8")
+    File_List = std_out.split("\n")
+    for line in File_List:
+        line_date = line.split("/").pop()
+        process_date.append(line_date)
+        dw_process_date = process_date[1:-1]
+    return sorted(dw_process_date)
+
+def getProcessDate(sourceDate,targetDate):
+    '''
+    This function will take sourceDate and targetDate and will return
+    only the Date which needs to process by subtracting each other
+    :param sourceDate:
+    :param targetDate:
+    :return:
+    '''
+    sourceDateSet = set(sourceDate)
+    targetDateSet = set(targetDate)
+    dw_process_date = list(sourceDateSet - targetDateSet)
+    return(dw_process_date)
+
+def targetLocation(table_name):
+    '''
+    This function will take the Table_name passed as an Argument and
+    Split the name to create a list of words
+    If word 'ENC' will exist in the list then Target location will be /prod_enc/core/
+    Else target Location will be /prod/core/
+    '''
+    wordList = table_name.split("_")
+    # print(wordList)
+    if 'enc' in wordList:
+        target_intial = '/prod_enc/core/'
+    else:
+        target_intial = '/prod/core/'
+    return(target_intial)
+
+#Get the hdfs target location to store the Processed data based on the Table name
+
+hdfs_target = targetLocation(table_name)
+
+hdfs_command = 'hadoop fs -ls'
+
+sourceLocation = hdfs_command + ' ' + '/reproc/core/' + table_name + '/' + year + '/'
+
+targetLocation = hdfs_command + ' ' + hdfs_target + table_name + '/' + year + '/'
+
+sourceDate = dateRange([sourceLocation])
+
+targetDate = dateRange([targetLocation])
+
+
+
+def main():
+    #Build the spark object
+    spark = (SparkSession.builder
+         .master("yarn")
+         .appName(table_name + "_" + year)
+         .config(conf=SparkConf()
+                 .set("spark.port.maxRetries", 25)
+                 .set("spark.yarn.queue", "gra_batch_apps")
+                 .set("spark.dynamicAllocation.enabled", "true")
+                 .set("spark.shuffle.service.enabled", "true")
+                 .set("spark.yarn.am.cores", 5)
+                 .set("spark.executor.memory","20g")
+                 .set("spark.executor.instances", 25)
+                )
+         .enableHiveSupport()
+         .getOrCreate()
+        )
+
+
+    for dw_process_date in sorted(getProcessDate(sourceDate,targetDate)):
+#    for dw_process_date in dateRange([hdfs_location]):
+
+        YYYY = dw_process_date[:4]
+        MM = dw_process_date[5:7]
+        DD = dw_process_date[8:]
+
+        #raw_location = '/reproc/core/addm_p/' + table_name + '/' + year + '/' + dw_process_date
+        raw_location = '/reproc/core/' + table_name + '/' + YYYY + '/' + dw_process_date
+
+        sc = spark.sparkContext
+        rdd = sc.textFile(raw_location)
+
+
+        schema_file = '/dw_apps/etl/reproc/e088339/addm/layout/' + table_name + '.lyt'
+        with open(schema_file) as schema_f:
+            schema_string = ' '.join([column.replace('\n', '') for column in schema_f])
+
+        #Initialize all fields as string type
+        columns = [StructField(column, StringType(), True) for column in schema_string.split()]
+        schema = StructType(columns)
+
+        record_delimiter = settings.CTRL_A
+
+        #Now split the record into CTRL_A separated columns and create another rdd
+        splitted_rdd = rdd.map(lambda record: record.split(record_delimiter))
+
+        df = spark.createDataFrame(splitted_rdd, schema)
+
+        #Clean NULLs
+        df_columns = [when(~trim(col(column)).isin("null", ""), col(column)).alias(column) for column in df.columns]
+        public_df = df.select(*df_columns)
+
+
+        temp_table = table_name + "_" + year
+        spark.catalog.dropTempView(temp_table)
+        public_df.createTempView(temp_table)
+
+
+        sql_file = '/dw_apps/etl/reproc/e088339/addm/sql/' + table_name + '.sql'
+        with open(sql_file) as tsql:
+            sql = tsql.read()
+        sql = sql.replace('\n', '')
+
+
+        output_location =  hdfs_target + table_name + '/' + YYYY + '/' + dw_process_date
+        output_df = spark.sql(sql + " " + temp_table)
+
+        output_df.write.parquet(output_location)
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
+=========================
+import os
+import sys
+import argparse
+import traceback
+from subprocess import Popen, PIPE
+from subprocess import check_output
+
+table_name = sys.argv[1]
+year = sys.argv[2]
+
+def dateRange(hdfs_location):
+    '''
+    This function will take the hdfs_location and will return the
+    List of Process_date by popping up the last directory of hdfs_location
+    :param hdfs_location:
+    :return:
+    '''
+    process_date = []
+    path = hdfs_location
+    process = Popen(path[0],shell=True,stdout=PIPE, stderr=PIPE)
+    std_out,err = process.communicate()
+    std_out = std_out.decode("utf-8")
+    File_List = std_out.split("\n")
+    for line in File_List:
+        line_date = line.split("/").pop()
+        process_date.append(line_date)
+        dw_process_date = process_date[1:-1]
+    return sorted(dw_process_date)
+
+def targetLocation(table_name):
+    '''
+    This function will take the Table_name passed as an Argument and
+    Split the name to create a list of words
+    If word 'ENC' will exist in the list then Target location will be /prod_enc/core/
+    Else target Location will be /prod/core/
+    '''
+    wordList = table_name.split("_")
+    # print(wordList)
+    if 'enc' in wordList:
+        target_intial = '/prod_enc/core/'
+    else:
+        target_intial = '/prod/core/'
+    return(target_intial)
+
+QueryList = []
+
+hdfs_target = targetLocation(table_name)
+
+hdfs_command = 'hadoop fs -ls'
+
+#sourceLocation = hdfs_command + ' ' + '/reproc/core/addm/' + table_name + '/' + year + '/'
+sourceLocation = hdfs_command + ' ' + '/prod/core/' + table_name + '/' + year + '/'
+
+sourceDate = dateRange([sourceLocation])
+
+for dw_process_date in sorted(sourceDate):
+    QueryList.append(f"ALTER TABLE etl_enc.clearing_chip_detail ADD IF NOT EXISTS PARTITION(DW_PROCESS_DATE='{dw_process_date}') LOCATION \'{hdfs_target}{table_name}/{year}/{dw_process_date}\';")
+
+
+sqlFile = f"/dw_apps/etl/reproc/e088339/addm/table_partition/{table_name}_partition.sql"
+
+sql = open(sqlFile,"a")
+for line in QueryList:
+    sql.write(line)
+    sql.write("\n")
+sql.close()
+
+
+===============
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+#Import standard modules
+
+import os
+import sys
+import argparse
+import traceback
+
+import errno
+import re
+import logging
+import math
+
+from pyspark.sql import *
+from pyspark.sql.types import *
+from pyspark.sql.utils import *
+from pyspark.sql.functions import *
+
+from pyspark.sql.types import *
+from os import access, R_OK
+from os.path import isfile
+
+from datetime import datetime
+from datetime import timedelta
+
+#Import pyspark modules
+from pyspark.conf import SparkConf
+from pyspark.sql.session import SparkSession
+
+#Import Setttings from dumbo
+#from dumbo import utils
+from subprocess import Popen, PIPE
+from subprocess import check_output
+
+#import modules for fetching date Range
+from dateutil import relativedelta
+import datetime
+
+def parse_args():
+    """Parse the command line arguments
+    Args:
+        None
+    Returns:
+        keywords dictionary
+    Raises:
+        ParseError: Raises an exception
+    """
+    #Create an argument parser
+
+    parser = argparse.ArgumentParser(description='azipld script for ETL')
+
+    #Mandatory argument -application
+    parser.add_argument("-table",
+                        dest="table",
+                        required=True,
+                        help="Table name",
+                       )
+
+    #Mandatory argument -category
+    parser.add_argument("-from_dt",
+                        dest="from_dt",
+                        required=False,
+                        help="From date",
+                       )
+
+    #Mandatory argument -dw_process_date
+    parser.add_argument("-to_dt",
+                        dest="to_dt",
+                        required=False,
+                        help="Process date",
+                       )
+
+    #If no errors, get all the arguments
+    args = parser.parse_args()
+
+    return {'table': args.table,
+            'from_dt': args.from_dt,
+            'to_dt': args.to_dt,
+           }
+#End of parse_args
+
+def init():
+    """Initialize a dictionary of keywords
+    Args:
+        param: None
+    Returns:
+        keywords dictionary
+    Raises:
+        None
+    """
+    #Define all the variables in a keyword dictionary
+    #for passing as key-value pairs
+    keywords = {}
+    keywords.update(parse_args())
+    return keywords
+
+def writeDF(output_df, to_dt, processTable):
+    '''
+    This function will be used to decide the mode of writing Dataframe
+    into HDFS target Location
+    :Param processTable:
+    :return:
+    '''
+    hdfs_stage = '/prod_enc/core/'
+    hdfs_prod = '/prod_enc/core/'
+    hdfs_prod_hsh = '/prod_hsh/core/'
+    hive_db = 'core.'
+    yearMonth = to_dt[:4] + to_dt[5:7]
+    tbl = hive_db + processTable
+    splitList = processTable.split("_")
+    # print(splitList)
+    if 'agg' in splitList or 'work' in splitList: #For loc_agg and work_enc table
+        output_location = hdfs_stage + processTable
+        output_df.write.mode("overwrite").saveAsTable(tbl, path=output_location)
+    elif processTable == 'res_zip_models_hsh':
+        output_location = hdfs_prod_hsh + processTable
+        output_df.write.parquet(output_location + "/" + yearMonth)
+    else:#For cut_cleared_table
+        output_location = hdfs_prod + processTable
+        output_df.write.parquet(output_location + "/" + yearMonth)
+
+
+def getDateRange(procesTable):
+    '''
+    This function will fetch 12 month range date
+    for loc_agg_ind table and res_work_enc tables
+    for cut_cleared table the range will be 1 month
+    previous month last date which will be used to
+    populate the dates in sql file.
+    :param procesTable:
+    :return:
+    '''
+    #print(procesTable)
+    splitList = procesTable.split("_")
+    print(splitList)
+    if 'work' in splitList:
+        mon = 12
+    else:
+        mon = 1
+    curtime = datetime.datetime.now()
+    startDate = curtime - relativedelta.relativedelta(months=mon)
+    fromDate = startDate.strftime('%Y-%m') + '-' + '01'
+    startMonth = curtime.replace(day=1)
+    lastMonth = startMonth - relativedelta.relativedelta(days=1)
+    toDate = lastMonth.strftime("%Y-%m-%d")
+    return ([fromDate, toDate])
+
+#End of daterange function
+
+def main():
+        #Initialize
+    keywords = init()
+    #table = keywords['table']
+    #print(table)
+
+    #Build the spark object
+    spark = (SparkSession.builder
+         .master("yarn")
+         .appName(keywords['table'])
+         .config(conf=SparkConf()
+                 .set("spark.port.maxRetries", 25)
+                 .set("spark.yarn.queue", "scheduled.etl")
+                 .set("spark.dynamicAllocation.enabled", "true")
+                 .set("spark.shuffle.service.enabled", "true")
+                 .set("spark.yarn.am.cores", 3)
+                 .set("spark.executor.memory","40g")
+                 .set("spark.sql.inMemoryColumnarStorage.compressed", "true")
+                 .set("spark.shuffle.compress", "true")
+                 .set("spark.rdd.compress", "true")
+                 .set("spark.shuffle.io.maxRetries", 10)
+                 .set("spark.shuffle.io.retryWait", "60s")
+                 .set("spark.executor.instances", 800)
+                 .set("spark.executor.heartbeatInterval", "10000000s")
+                 .set("spark.network.timeoutInterval", "10000000s")
+                 .set("spark.network.timeout", "10000001s")
+                 .set("spark.sql.broadcastTimeout", "10000s")
+                )
+         .enableHiveSupport()
+         .getOrCreate()
+        )
+
+
+    if not keywords.get('from_dt'):
+        from_dt = getDateRange(keywords['table'])[0]
+        to_dt = getDateRange(keywords['table'])[1]
+    else:
+        from_dt = keywords['from_dt']
+        to_dt = keywords['to_dt']
+
+    keywords['from_dt'] = from_dt
+    keywords['to_dt'] = to_dt
+    keywords['year_month'] = to_dt[:4] + to_dt[5:7]
+    sql_file = '/dw_apps/etl/api/sql/transform/' + keywords['table'] + '.sql'
+
+    with open(sql_file) as tsql:
+        sql = tsql.read()
+    sql1 = sql.replace('\n', ' ')
+    sql2 = sql1 % keywords
+
+    output_df = spark.sql(sql2)
+    #Calling Dataframe write function to write the Dataframe into HDFS location
+    writeDF( output_df, to_dt, processTable = keywords['table'] )
+
+
+if __name__ == "__main__":
+    sys.exit(main())
+
