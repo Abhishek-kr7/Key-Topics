@@ -1,0 +1,283 @@
+#!/bin/bash
+#=====================================================================================================#
+#                 Copyright (c) 2020  MasterCard International                                        #
+#                             All rights reserved.                                                    #
+#                                                                                                     #
+# This Script is built for the ETL Process fo CLEARING_CHIP_DETAIL Table from Netezza DB              #
+# to HDFS Location and Hive DB.                                                                       #
+#                                                                                                     #
+#                                                                                                     #
+# Usage:                                                                                              #
+# 1. To run for the Maximum Processed Date.                                                           #
+# nohup /dw_apps/etl/reproc/pig_reprocess/run_clr_chip_dtl.sh                                         #
+# 2. To run for the Specific Date.                                                                    #
+# nohup /dw_apps/etl/reproc/clearing_chip_dtl/run_clr_chip_dtl.sh ${dw_process_date}                  #
+# 3. To run in Restart Mode.                                                                          #
+# nohup /dw_apps/etl/reproc/clearing_chip_dtl/run_clr_chip_dtl.sh -r ${Step} ${dw_process_date}       #
+# Note: dw_process_date should be in YYYY-MM-DD format only.                                          #
+#                                                                                                     #
+#                                                                                                     #
+# Log:                                                                                                #
+#     12/12/2020      E071509      Initial code for ETL Process of CLEARING_CHIP_DETAIL               #
+#     12/12/2020      E088339      Initial code for ETL Process of CLEARING_CHIP_DETAIL               #
+#                                                                                                     #
+#                                                                                                     #
+#=====================================================================================================#
+arg=$#
+tableName="clearing_chip_detail"
+
+workDir=/dw_apps/etl/reproc/clearing_chip_dtl/
+ntzDir=/dw_apps/fluidqueries/weeklist
+fqDir=/dw_apps/fluidqueries/
+
+exec > ${workDir}log/${tableName}_`date '+%Y%m%d_%H%M%S'`.log
+exec 2>&1
+
+dateTime(){
+    date '+%Y-%m-%d %T'
+}
+
+verifyDate(){
+    echo "`dateTime` | Fetching last processed date for the Table ${tableName} on Netezza Database..."
+    echo ""
+    ntzMaxDate=`sqoop eval \
+    --connect jdbc:netezza://nps2ksc0/CORE \
+    --username SVC_DW_HADOOP \
+    --password cU2iZmj5 \
+    --query "SELECT MAX(DW_PROCESS_DATE) FROM CORE.CLEARING_CHIP_DETAIL" | grep "|" | grep -v "MAX" | tr -d '[ ]' | sed 's/|//g'` 2> /dev/null
+    echo ""
+    echo "`dateTime` | Last processed date on Netezza is: ${ntzMaxDate}"
+    echo "`dateTime` | Fetching last processed date for the Table ${tableName} on Impala Database..."
+    impMaxDate=`impala -d core -B --quiet -q "SELECT MAX(DW_PROCESS_DATE) FROM ETL_ENC.CLEARING_CHIP_DETAIL;"`
+    echo "`dateTime` | Last processed date on Impala is: ${impMaxDate}"
+    dateStatus=`impala -d core -B --quiet -q "Select from_unixtime(unix_timestamp('${impMaxDate}','yyyy-MM-dd'),'yyyy-MM-dd') < from_unixtime(unix_timestamp('${ntzMaxDate}','yyyy-MM-dd'),'yyyy-MM-dd');"`
+    if [ ${dateStatus} == "true" ] ;
+    then
+        echo "`dateTime` | Netezza table is having updated date data."
+        echo "`dateTime` | Starting ETL process of the table ${tableName} for Processing date: ${ntzMaxDate}.."
+        nextStep=10
+    else
+        echo "`dateTime` | Hadoop Table is already having Updated date data.."
+        echo "`dateTime` | Skipping ETL process of ${tableName}.."
+        nextStep=90
+    fi
+}
+
+echo "`dateTime` | Starting ETL process for ${tableName} table..."
+
+if [ ${arg} -eq 0 ] ;
+then
+    verifyDate
+    nextStep=10
+elif [ ${arg} -eq 1 ] && [ "$1" != "-r" ] ;
+then
+    ntzMaxDate=`echo $1`
+    nextStep=10
+elif [ ${arg} -eq 3 ] ;
+then
+    if [ "$1" == "-r" ] ;
+    then
+        echo "`dateTime` | Clearing_Chip_Detail load will run in Restart mode on `date '+%y-%m-%d at %H:%M:%S'`"
+        #Check for the Start position
+        case $2 in
+            10 )
+                nextStep=10
+                ntzMaxDate=$3 ;;
+            20 )
+                nextStep=20
+                ntzMaxDate=$3 ;;
+            30 )
+                nextStep=30
+                ntzMaxDate=$3 ;;
+            40 )
+                nextStep=40
+                ntzMaxDate=$3 ;;
+            *  )
+                echo "`dateTime` | Restart value is Invalid: $2"
+                echo "`dateTime` | Restart value should be 10 or 20 or 30 or 40"
+                exit
+        esac
+    else
+        echo "`dateTime` | Invalid Restart argument Provided!"
+        exit
+    fi
+else
+    echo "`dateTime` | Invalid Number of Arguments provided!"
+    exit
+fi
+
+ProcDate=`echo ${ntzMaxDate}`
+YYYYMMDD=`echo ${ProcDate} | sed 's/-//g'`
+Year=`echo ${ProcDate} | cut -c 1-4`
+
+if [ ${nextStep} == 10 ] ;
+then
+    #Build the .lst file to extract the data from Netezza Database
+    echo "`dateTime` | Beginning Netezza extraction process for ${tableName} and process date: ${ProcDate}."
+    echo "`dateTime` | Building ${tableName}_${Year}_${YYYYMMDD}.lst file.."
+    python3 ${workDir}build_ntz_lst.py ${tableName} ${ProcDate}
+    if [ $? -ne 0 ] ;
+    then
+        echo "`dateTime` | Failed to generate lst file for Netezza FQ!"
+    else
+        if [ -f ${workDir}${tableName}_${Year}_${YYYYMMDD}.lst ] ;
+        then
+            echo "`dateTime` | Lst file for Netezza FQ generated successfully."
+            echo "`dateTime` | Copying File to Netezza Directory..."
+            cp ${workDir}${tableName}_${Year}_${YYYYMMDD}.lst ${ntzDir}
+            if [ $? -eq 0 ] ;
+            then
+                nextStep=20
+            else
+                echo "`dateTime` | Failed to copy the lst file to ${ntzDir}!"
+                exit
+            fi
+        else
+            echo "`dateTime` | Lst file not found!"
+            echo "`dateTime` | Cannot Start Netezza Extraction!"
+            exit
+        fi
+    fi
+else
+    echo "`dateTime` | Skipping Step 10..."
+fi
+
+if [ ${nextStep} == 20 ] ;
+then
+    #Execute Fluid Query Extraction
+    fqScript="run_FQ_PUB_CLEARING_CHIP_DETAIL_nps2ksc0.sh"
+    echo "`dateTime` | Running Fluid Query to Extract Data of ${tableName} for ${ProcDate} from Netezza..."
+    nohup sh ${fqDir}${fqScript} ${tableName}_${Year}_${YYYYMMDD}.lst &
+    echo "`dateTime` | FQ Log: /iwlog/loadmgr_cut/run_fq_${tableName}_${Year}_${YYYYMMDD}.lst_*.log"
+    #sleep for 5 Min before executing next steps.
+    sleep 150
+    echo "`dateTime` | Waiting for completion of running FQ job..."
+    processCount=`ps -ef | grep ${tableName}_${Year}_${YYYYMMDD}.lst | wc -l`
+    while [ $processCount -ne 1 ]
+    do
+        echo "`dateTime` | Running Process ID's(PID) count: $processCount!"
+        sleep 600
+        processCount=`ps -ef | grep ${tableName}_${Year}_${YYYYMMDD}.lst | wc -l`
+    done
+    echo "`dateTime` | FQ extraction completed for the table: ${tableName}."
+    echo "`dateTime` | Beginning Validation of the extracted data.."
+    ntzDataDir=`cat ${workDir}${tableName}_${Year}_${YYYYMMDD}.lst | awk -F " " '{print $1}' | tr -d '[ ]'`
+    fileDir=`cat ${workDir}${tableName}_${Year}_${YYYYMMDD}.lst | awk -F " " '{print $2}' | tr -d '[ ]'`
+    hadoop fs -test -d /user/dw/TEMPCLEARING/${ntzDataDir}/${fileDir}.gz
+    if [ $? -ne 0 ] ;
+    then
+        echo "`dateTime` | Data directory not found!"
+        echo "`dateTime` | Processing failed in step ${nextStep}!"
+        echo "`dateTime` | Aborting further processes."
+        exit
+    else
+        echo "`dateTime` | Data directory found: /user/dw/TEMPCLEARING/${ntzDataDir}/${fileDir}.gz."
+        fileCnt=`hadoop fs -count /user/dw/TEMPCLEARING/${ntzDataDir}/${fileDir}.gz | awk -F " " '{print $2}'`
+        echo "`dateTime` | There are ${fileCnt} files in the data directory."
+        nextStep=30
+    fi
+else
+    echo "`dateTime` | Skipping Step 20..."
+fi
+
+if [ ${nextStep} == 30 ] ;
+then
+    #Beginning Execution of Pyspark Jobs to Transform the Data.
+    echo "`dateTime` | Running Spark Job for data Transformation..."
+    spark-submit ${workDir}clearing_chip_detail.py ${tableName} ${ProcDate} > /iwlog/spark_${tableName}_${ProcDate}_`date '+%y%m%d_%H%M%S'`.log 2>&1
+    echo "`dateTime` | Spark Log: /iwlog/spark_${tableName}_${ProcDate}_`date '+%y%m%d'`*.log"
+    if [ $? -ne 0 ] ;
+    then
+        echo "`dateTime` | Spark Job Failed!"
+        echo "`dateTime` | Aborting further processes."
+        echo "`dateTime` | Processing failed in step ${nextStep}!"
+        exit
+    else
+        echo "`dateTime` | Spark Job completed Successfully!"
+        nextStep=40
+    fi
+else
+    echo "`dateTime` | Skipping Step 30..."
+fi
+
+db="etl_enc"
+if [ ${nextStep} == 40 ] ;
+then
+    #Validate the Target Data and Post Process for Impala and Hive
+    echo "`dateTime` | Validating the Target Data Directory..."
+    targetDir=/prod/core/clearing_chip_dtl/${Year}/${ProcDate}
+    hadoop fs -test -d ${targetDir}
+    if [ $? -eq 0 ] ;
+    then
+        echo "`dateTime` | Found data directory: ${targetDir}"
+        fileCount=`hadoop fs -count ${targetDir} | awk -F " " '{print $2}'`
+        if [ ${fileCount} -gt 1 ] ;
+        then
+            echo "`dateTime` | There are ${fileCount} files in the Data directory."
+            echo "`dateTime` | Adding Data partition to the table.."
+            beeline -u $hiveurl -e "set hive.support.concurrency=false;ALTER TABLE ${db}.${tableName} ADD IF NOT EXISTS PARTITION(DW_PROCESS_DATE='${ProcDate}') LOCATION '${targetDir}';" 2> /dev/null
+            return_code=`echo $?`
+            if [ $return_code -eq 0 ] ;
+            then
+                echo "`dateTime` | Partition added successfully!"
+            else
+                echo "`dateTime` | Failed to add Partition!"
+                echo "`dateTime` | Execute below commands manually to complete the load process."
+                echo "`dateTime` | beeline -u \$hiveurl -e \"ALTER TABLE ${db}.${tableName} ADD PARTITION(DW_PROCESS_DATE='${ProcDate}') LOCATION '${targetDir}';\""
+                echo "`dateTime` | impala -d ${db} -q \"COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');\""
+                echo "`dateTime` | impala -d ${db} -q \"INVALIDATE METADATA ${db}.${tableName};\""
+                exit
+            fi
+            echo "`dateTime` | Refreshing Metadata for the Table: ${tableName}."
+            impala -d ${db} -q "REFRESH ${db}.${tableName};" 2> /dev/null
+            return_code=`echo $?`
+            if [ $return_code -eq 0 ] ;
+            then
+                echo "`dateTime` | Table Refreshed successfully!"
+            else
+                echo "`dateTime` | Failed to Refresh Table!"
+                echo "`dateTime` | Execute below commands manually to complete the Invalidate process."
+                echo "`dateTime` | impala -d ${db} -q \"REFRESH ${db}.${tableName};\""
+                echo "`dateTime` | impala -d ${db} -q \"INVALIDATE METADATA ${db}.${tableName};\""
+                echo "`dateTime` | Load process completed with Error."
+                exit
+            fi
+            echo "`dateTime` | Computing Table Stats..."
+            impala -d $db -q "COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');" 2> /dev/null
+            return_code=`echo $?`
+            if [ $return_code -eq 0 ] ;
+            then
+                echo "`dateTime` | Compute Statistics completed for the Table Partition."
+            else
+                echo "`dateTime` | Failed to compute Statistic for the Partition!"
+                echo "`dateTime` | Below command needs to be executed manually to complete the Stat computation."
+                echo "`dateTime` | impala -d ${db} -q \"COMPUTE INCREMENTAL STATS ${db}.${tableName} PARTITION(DW_PROCESS_DATE='${ProcDate}');\""
+            fi
+        else
+            echo "`dateTime` | Datafile not found in the Data Directory!"
+            echo "`dateTime` | Processing Failed in Step: ${nextStep}!"
+            echo "`dateTime` | Aborting further processes..."
+            exit
+        fi
+    else
+        echo "`dateTime` | Datafile Directory not found!"
+        echo "`dateTime` | Processing Failed in Step: ${nextStep}!"
+        echo "`dateTime` | Aborting further processes..."
+        exit
+    fi
+else
+    echo "`dateTime` | Skipping Step 40..."
+    nextStep=90
+fi
+
+if [ ${nextStep} == 90 ] ;
+then
+    echo "`dateTime` | ETL Process Failed due to Error!"
+    echo "`dateTime` | Aborting further processes.."
+    exit
+else
+    #Execute Cleanup in ${workDir}
+    rm -f ${workDir}${tableName}_${Year}_${YYYYMMDD}.lst
+    echo "`dateTime` | Successfully completed ETL process of ${db}.${tableName} for the Process Date: ${ProcDate}!"
+    exit
+fi
